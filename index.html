@@ -4,6 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="theme-color" content="#f7f3ec">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>گفت‌وگوی نمایشی</title>
 <style>
 :root{--green:#d9fdd3;--green-dark:#20a66a;--cream:#f7f3ec;--ink:#20282b;--muted:#667477;--white:#fff;--line:#e8e4dc;--shadow:0 8px 28px #26323818}
@@ -77,6 +80,8 @@
       <button class="menuitem" data-action="restore"><span>📂</span><span>بازیابی پشتیبان</span></button>
       <button class="menuitem" data-action="save"><span>✓</span><span>ثبت چت</span></button>
       <button class="menuitem" data-action="clear"><span>🗑️</span><span>پاک‌کردن پیام‌ها</span></button>
+      <button class="menuitem" data-action="normalMode"><span>💬</span><span>حالت عادی</span></button>
+      <button class="menuitem" data-action="botMode"><span>🤖</span><span>حالت ربات</span></button>
     </div>
     <div id="settingsView" class="hidden">
       <section class="section">
@@ -98,14 +103,72 @@
 'use strict';
 const $=id=>document.getElementById(id);
 const STORE='mockChatStandalone_v1';
-const state={name:'',photo:'',messages:[],mode:'mine',nextId:1};
+const state={name:'',photo:'',messages:[],mode:'mine',nextId:1,botEnabled:false,isTyping:false};
+let botReplyTimers=[];
 const emojis=['😀','😂','🥰','😍','😘','❤️','👍','🙏','🌹','😢','😎','🎉','😊','😉','🤗','💔','✨','🔥','🤔','👏','💐','😴','🥳','💯'];
 let toastTimer, pendingPhoto='';
 function toast(msg){const el=$('toast');el.textContent=msg;el.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove('show'),2600)}
 function clock(ts){return new Date(ts).toLocaleTimeString('fa-AF',{hour:'2-digit',minute:'2-digit',hour12:false})}
 function safeText(s){return String(s??'')}
 function updateMode(){const mine=state.mode==='mine';$('modeBtn').textContent=mine?'م':'ط';$('modeBtn').classList.toggle('theirs',!mine);$('modeBtn').title=mine?'حالت پیام: من':'حالت پیام: طرف مقابل';$('modeBtn').setAttribute('aria-label',$('modeBtn').title)}
-function updateLastSeen(){const el=$('lastSeen');if(document.visibilityState==='visible'&&state.isOnline){el.textContent='آنلاین';return}const now=new Date();el.textContent='آخرین بازدید امروز ساعت '+now.toLocaleTimeString('fa-AF',{hour:'2-digit',minute:'2-digit',hour12:false})}
+function updateLastSeen(){const el=$('lastSeen');if(state.isTyping){el.textContent='آنلاین · در حال نوشتن…';return}if(document.visibilityState==='visible'&&state.isOnline){el.textContent='آنلاین';return}const now=new Date();el.textContent='آخرین بازدید امروز ساعت '+now.toLocaleTimeString('fa-AF',{hour:'2-digit',minute:'2-digit',hour12:false})}
+function setBotMode(enabled){state.botEnabled=enabled;state.isTyping=false;botReplyTimers.forEach(clearTimeout);botReplyTimers=[];state.mode='mine';updateMode();updateLastSeen();closeDrawer();toast(enabled?'حالت ربات فعال شد 🤖':'حالت عادی فعال شد؛ پاسخ خودکار خاموش است.')}
+function botAnswer(message){const t=String(message||'').toLowerCase().replace(/[؟?!،,.؛:]/g,' ').replace(/\s+/g,' ').trim();const rules=[
+{p:['سلام','سلا','سلام علیکم','السلام علیکم'],r:['سلام جان، خوبی؟ 😊','وعلیکم سلام رفیق، چه خبر؟','سلام عزیز، خوش آمدی!']},
+{p:['خوبی','چطور هستی','چطوری','حالت چطور'],r:['تشکر، خوب هستم، تو چطور هستی؟','جور هستم جان، از خودت بگو!','خوب هستم، امیدوارم تو هم جور باشی.']},
+{p:['چه خبر','چی خبر','خبرها'],r:['خبر خاص نیست، تو بگو چه خبر؟','همه چیز جور است، از خودت بگو!','تو آمدی، حالا خبر جور شد! 😂']},
+{p:['کجایی','کجا هستی'],r:['همین‌جا هستم، با تو گپ می‌زنم!','در دنیای انترنت هستم، تو کجایی؟']},
+{p:['چی کار میکنی','چه کار میکنی','مصروف چی'],r:['با تو گپ می‌زنم، تو چی کار داری؟','منتظر بودم تو بیایی! 😄']},
+{p:['نامت چیست','اسمت چیست','تو کی هستی'],r:['من ربات چت تو هستم 🤖','نامم ربات است؛ تو را چی صدا کنم؟']},
+{p:['تشکر','ممنون','مرسی'],r:['قربانت جان!','خواهش می‌کنم، خوشحال شدم کمک کردم.','تشکر نکن رفیق، باز هم بگو!']},
+{p:['خدا حافظ','خداحافظ','فعلا','بای'],r:['خدا حافظ جان، مراقب خودت باش!','به امید دیدار رفیق!','باز هم بیا گپ می‌زنیم.']},
+{p:['بخند','شوخی','لطیفه'],r:['هاهاهاها! 😂','چرا کمپیوتر سردش شد؟ چون پنجره‌اش باز بود! 😂','مه شوخی بلدم، اما معاش ندارم!']},
+{p:['دوستت دارم','عزیزم'],r:['چه گپ قشنگی گفتی! ❤️','تشکر از مهربانی‌ات، رفیق جان!']},
+{p:['دوست من هستی','رفیق من'],r:['بلی جان، با خوشی با تو گپ می‌زنم!','رفاقت با گپ‌های خوب شروع می‌شود!']},
+{p:['دلم تنگ','دلتنگ'],r:['بیا گپ بزنیم جان، چی در دلت است؟','امیدوارم زودتر دلت آرام شود.']},
+{p:['قهر هستم','از تو قهر'],r:['اوهو، چی شده جان؟','اگر اشتباه کردم، بگو تا درستش کنم.']},
+{p:['غمگین','غم دارم','دلم گرفته','ناراحت'],r:['افسوس جان، چی شده؟','اگر خواستی برایم بگو، کوشش می‌کنم بفهممت.','امیدوارم حالت بهتر شود.']},
+{p:['گریه','گریه ام میاید'],r:['اگر دلت پر است، گپ زدن کمک کرده می‌تواند.','متأسفم که ناراحتی؛ چی آزارت می‌دهد؟']},
+{p:['خوشحال','خوش هستم'],r:['آفرین! چی خبر خوش داری؟ 😄','همیشه خوش باشی جان!']},
+{p:['تنها هستم','تنهایی'],r:['اگر خواستی، بیا کمی گپ بزنیم.','تنهایی گاهی سخت می‌شود؛ چی در فکرت است؟']},
+{p:['خسته شدم','خسته هستم','خسته ام'],r:['خدا قوت جان، کمی استراحت کن.','امروز کارت زیاد بود؟','جانت مهم است، به خودت هم وقت بده.']},
+{p:['کار ندارم','بیکار هستم','وظیفه میخواهم'],r:['در کدام بخش کار می‌خواهی؟','تجربهٔ کاری‌ات در چی بخش است؟']},
+{p:['پیسه ندارم','پول ندارم'],r:['امیدوارم مشکلاتت آسان شود؛ چی نیاز داری؟','می‌تانیم راه‌های بهتر کردن وضعیتت را بررسی کنیم.']},
+{p:['زندگی سخت','از زندگی خسته'],r:['بعضی روزها واقعاً سخت می‌گذرد؛ چی بیشتر آزارت می‌دهد؟','از یک قدم کوچک شروع کن جان؛ لازم نیست همه چیز را یک‌باره حل کنی.']},
+{p:['موفق میشوم','موفقیت'],r:['با تلاش، یادگیری و برنامه‌ریزی چانس موفقیتت بیشتر می‌شود.','قدم‌های کوچک هم تو را پیش می‌برد.']},
+{p:['غذا خوردی','غذا'],r:['مه غذا نمی‌خورم، ربات هستم! 😂 تو غذا خوردی؟','اگر گرسنه هستی، یک چیزی بخور جان!']},
+{p:['خوابیدی','خواب هستی'],r:['مه مثل آدم‌ها خواب نمی‌کنم!','ربات‌ها هم شیفت شب دارند؟ 😂']},
+{p:['چند سال داری','سنت چند'],r:['سن انسانی ندارم، اما آمادهٔ گپ زدن هستم!','تو چند سال داری، اگر خواستی بگو.']},
+{p:['اهل کجا','از کجا هستی'],r:['من هوش مصنوعی هستم و زادگاه انسانی ندارم.','تو اهل کجا هستی؟']},
+{p:['هوش مصنوعی','ربات هستی'],r:['بلی، من یک ربات چت هستم! 🤖','درست فهمیدی، مه هوش مصنوعی هستم.']},
+{p:['فوتبال'],r:['طرفدار کدام تیم هستی؟','کدام بازیکن را بیشتر دوست داری؟']},
+{p:['موسیقی','آهنگ'],r:['چه نوع موسیقی را دوست داری؟','آهنگ شاد دوست داری یا آرام؟']},
+{p:['فلم','فیلم'],r:['کدام نوع فلم را دوست داری؛ خنده‌دار یا اکشن؟','اگر نام فلم بگویی، درباره‌اش گپ می‌زنیم.']},
+{p:['هوا چطور','آب و هوا'],r:['در کدام شهر هستی تا دربارهٔ هوایش معلومات بدهم؟']},
+{p:['کمکم کن','کمک میخواهم'],r:['البته جان، بگو چی کمک می‌خواهی؟','بگو مشکل چیست تا با هم بررسی کنیم.']},
+{p:['یک سوال دارم','سوال بپرسم'],r:['بپرس جان، گوشم با تو است!','البته، سوالت را بگو.']},
+{p:['نمیفهمم','نفهمیدم'],r:['پروا ندارد، ساده‌تر تشریح می‌کنم.','بگو کدام قسمت مشکل است.']},
+{p:['حوصله ندارم','بی حوصله'],r:['چی شده جان؟ شاید گپ زدن کمی کمکت کند.','اگر خسته هستی، کمی استراحت کن.']},
+{p:['بازی کنیم','حوصله ام سر رفته'],r:['بیا یک بازی کلمه‌ای کنیم! 😂','می‌خواهی لطیفه بگویم یا سوال جالب بپرسم؟']},
+{p:['دعا کن','برایم دعا'],r:['الله تعالی برایت آسانی، صحت و خیر نصیب کند. آمین.','خداوند مشکلاتت را آسان و دلت را آرام کند.']},
+{p:['نماز','قرآن'],r:['اگر سوال دینی داری، بپرس تا با احترام بررسی کنیم.','الله تعالی خیر نصیب کند.']},
+{p:['مریض هستم','بیمار هستم','حالم خراب'],r:['متأسفم جان، امیدوارم زودتر صحت‌مند شوی.','اگر حالت شدید است یا بدتر می‌شود، با داکتر مشوره کن.']},
+{p:['موبایلم خراب','تلفنم خراب'],r:['چی مشکل دارد؟ روشن نمی‌شود یا صفحه‌اش خراب است؟','مدل موبایل و مشکلش را بگو تا راهنمایی کنم.']},
+{p:['برنامه نویسی','کدنویسی','HTML','جاوااسکریپت'],r:['جالب است! می‌خواهی در HTML، CSS یا JavaScript کمک کنم؟','برای ساخت چت ربات، HTML و JavaScript انتخاب ساده‌ای است.']},
+{p:['انگلیسی','آلمانی','زبان یاد'],r:['عالی! می‌خواهی جمله‌های ساده یاد بگیری؟','هر روز چند کلمه یاد بگیر و تمرین کن.']},
+{p:['مبارک','تبریک'],r:['تشکر جان! تو هم همیشه خوش باشی.','قربانت، خوشحالی‌ات مبارک! 🎉']},
+{p:['معذرت','ببخشید'],r:['پروا ندارد جان!','قبول است، همه اشتباه می‌کنیم.']},
+{p:['نصیحت','انگیزه بده','تشویق کن'],r:['پیش از تصمیم مهم، آرام فکر کن و معلومات جمع کن.','تو لازم نیست همه راه را امروز بروی؛ فقط قدم بعدی را بردار!']},
+{p:['تو واقعی هستی','آدم هستی'],r:['نه، من هوش مصنوعی هستم، نه انسان.','می‌تانم گپ بزنم، اما زندگی انسانی ندارم.']},
+{p:['خسته نمیشوی','خسته نمیشی'],r:['مثل انسان خستگی احساس نمی‌کنم، اما ممکن است اشتباه کنم.','تو هم اگر خسته شدی، استراحت کن جان.']},
+{p:['راست میگویی','دروغ'],r:['کوشش می‌کنم درست جواب بدهم، اما گاهی اشتباه می‌کنم.','اگر موضوع مهم است، بهتر است بررسی دقیق هم کنیم.']},
+{p:['خوب است','عالی','فوق العاده'],r:['بسیار عالی! 😄','خوشحال شدم که خوشت آمد!']},
+{p:['نه','نی'],r:['بسیار خوب، پس چی می‌خواهی؟','قبول است، گزینهٔ دیگر را بررسی کنیم.']},
+{p:['بلی','بله'],r:['بسیار خوب جان!','عالی، ادامه بده.']},
+{p:['چه میگویی','چی میگویی','چی گپ است'],r:['می‌گویم بگو چه گپ داری! 😂','گپ خاص نیست، تو بگو چی گپ است؟']},
+{p:['تو احساس داری','احساس میکنی'],r:['احساس انسانی ندارم، اما کوشش می‌کنم با احترام و همدلی جواب بدهم.','می‌تانم دربارهٔ احساساتت با تو گپ بزنم.']}
+];for(const rule of rules){if(rule.p.some(k=>t.includes(k.toLowerCase())))return rule.r[Math.floor(Math.random()*rule.r.length)]}const fallback=['جان، کمی بیشتر تشریح کن تا بهتر بفهمم.','گپت جالب است! بیشتر بگو.','ببخشید، این گپ را درست نفهمیدم؛ یک شکل دیگر بنویس.','می‌خواهی سوالت را واضح‌تر بنویسی؟','مه گوش می‌دهم رفیق، ادامه بده! 😊'];return fallback[Math.floor(Math.random()*fallback.length)]}
+function scheduleBotReply(message){if(!state.botEnabled||message.from!=='mine'||message.kind!=='text')return;const start=setTimeout(()=>{if(!state.botEnabled)return;state.isTyping=true;state.isOnline=true;updateLastSeen();const delay=3000+Math.floor(Math.random()*3)*1000;const finish=setTimeout(()=>{if(!state.botEnabled)return;state.isTyping=false;state.isOnline=true;updateLastSeen();addMessage({kind:'text',text:botAnswer(message.text),from:'theirs'});},delay);botReplyTimers.push(finish)},2000);botReplyTimers.push(start)}
 function setOnline(){state.isOnline=true;updateLastSeen()}
 function updateProfile(){ $('headerName').textContent=state.name||'';$('profileName').value=state.name||'';const has=!!state.photo;$('headerAvatar').hidden=!has;$('avatarFallback').hidden=has;$('profilePreview').hidden=!has;$('previewFallback').hidden=has;if(has){$('headerAvatar').src=state.photo;$('profilePreview').src=state.photo}}
 function render(){const host=$('messages');host.replaceChildren();for(const m of state.messages){const row=document.createElement('div');row.className='msg-row '+(m.from==='mine'?'mine':'theirs');const bubble=document.createElement('div');bubble.className='bubble';
@@ -166,10 +229,11 @@ function playSendSound(){
   } catch (e) { /* browser audio may be unavailable */ }
 }
 function addMessage(payload){
-  const message={id:state.nextId++,from:state.mode,time:Date.now(),...payload};
+  const message={id:state.nextId++,from:(state.botEnabled&&payload.from!=='theirs')?'mine':(payload.from||state.mode),time:Date.now(),...payload};
   if(message.from==='mine') message.blueTick=false;
   state.messages.push(message);render();persist(false);$('emojiPanel').classList.remove('open');playSendSound();
-  setTimeout(()=>{setOnline();if(message.from==='mine'){const found=state.messages.find(m=>m.id===message.id);if(found){found.blueTick=true;render();persist(false)}}},3000);
+  setTimeout(()=>{if(message.from==='mine'){const found=state.messages.find(m=>m.id===message.id);if(found){found.blueTick=true;persist(false);if(!state.isTyping)render()}}if(!state.isTyping)setOnline()},3000);
+  scheduleBotReply(message);
 }
 function sendText(){const text=$('messageInput').value.trim();if(!text)return;addMessage({kind:'text',text});$('messageInput').value='';resizeInput();$('sendBtn').classList.remove('show');$('messageInput').focus()}
 function resizeInput(){const t=$('messageInput');t.style.height='auto';t.style.height=Math.min(t.scrollHeight,140)+'px'}
@@ -183,9 +247,9 @@ function closeDrawer(){$('overlay').classList.remove('open')}
 function newChat(){if(!confirm('گفت‌وگوی فعلی پاک و یک چت تازه ساخته شود؟ اگر لازم است، اول فایل پشتیبان بگیر.'))return;state.messages=[];state.nextId=1;render();persist(false);closeDrawer();toast('چت تازه ساخته شد.')}
 function clearChat(){if(!confirm('همهٔ پیام‌های این گفت‌وگو پاک شوند؟ این کار قابل برگشت نیست.'))return;state.messages=[];state.nextId=1;render();persist(false);toast('پیام‌ها پاک شدند.')}
 async function restoreFile(file){if(!file)return;let parsed;try{parsed=JSON.parse(await file.text())}catch(e){toast('فایل JSON معتبر نیست.');return}const msgs=parsed.messages;const profile=parsed.profile||{};if(!Array.isArray(msgs)||!msgs.every(m=>m&&['mine','theirs'].includes(m.from)&&Number.isFinite(Number(m.time)))){toast('ساختار فایل پشتیبان معتبر نیست.');return}if(!confirm('چت و پروفایل فعلی با اطلاعات فایل انتخاب‌شده جایگزین شوند؟'))return;state.messages=msgs.map((m,i)=>({...m,id:Number(m.id)||i+1,from:m.from==='theirs'?'theirs':'mine',time:Number(m.time)||Date.now(),kind:m.kind||'text'}));state.name=String(profile.name||parsed.name||'');state.photo=String(profile.photo||parsed.photo||'');state.nextId=Math.max(Number(parsed.nextId)||1,...state.messages.map(m=>Number(m.id)+1),1);render();updateProfile();persist(false);closeDrawer();toast('پشتیبان بازیابی شد.')}
-$('modeBtn').addEventListener('click',()=>{state.mode=state.mode==='mine'?'theirs':'mine';updateMode();toast('حالت پیام: '+(state.mode==='mine'?'من':'طرف مقابل'))});
+$('modeBtn').addEventListener('click',()=>{if(state.botEnabled){toast('برای تغییر به حالت عادی، از سه‌نقطه «حالت عادی» را انتخاب کن.');return}state.mode=state.mode==='mine'?'theirs':'mine';updateMode();toast('حالت پیام: '+(state.mode==='mine'?'من':'طرف مقابل'))});
 $('menuBtn').addEventListener('click',()=>openDrawer());$('closeDrawer').addEventListener('click',closeDrawer);$('overlay').addEventListener('click',e=>{if(e.target===$('overlay'))closeDrawer()});
-document.querySelectorAll('[data-action]').forEach(b=>b.addEventListener('click',()=>{const a=b.dataset.action;if(a==='settings')showDrawerView('settings');if(a==='new')newChat();if(a==='backup')exportBackup();if(a==='restore')$('restoreInput').click();if(a==='save')persist();if(a==='clear')clearChat()}));
+document.querySelectorAll('[data-action]').forEach(b=>b.addEventListener('click',()=>{const a=b.dataset.action;if(a==='settings')showDrawerView('settings');if(a==='new')newChat();if(a==='backup')exportBackup();if(a==='restore')$('restoreInput').click();if(a==='save')persist();if(a==='clear')clearChat();if(a==='normalMode')setBotMode(false);if(a==='botMode')setBotMode(true)}));
 $('sendBtn').addEventListener('click',sendText);$('messageInput').addEventListener('input',()=>{resizeInput();$('sendBtn').classList.toggle('show',!!$('messageInput').value.trim())});$('messageInput').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendText()}});
 $('cameraBtn').addEventListener('click',()=>$('cameraInput').click());$('attachBtn').addEventListener('click',()=>$('attachInput').click());
 $('cameraInput').addEventListener('change',async e=>{const f=e.target.files[0];if(!f)return;try{const data=await dataURL(f);addMessage({kind:'image',data,name:f.name});toast('عکس به گفت‌وگوی نمایشی اضافه شد.')}catch(err){toast('بارگذاری عکس ناموفق بود.')}e.target.value=''});
@@ -213,6 +277,25 @@ window.addEventListener('resize', fitVisibleViewport);
 document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'){if(state.messages.length) setOnline();else updateLastSeen()}else{state.isOnline=false;updateLastSeen()}});
 loadSaved();updateProfile();updateMode();render();updateLastSeen();
 })();
+</script>
+<script>
+/* تازه‌سازی خودکار نسخهٔ سایت در GitHub Pages */
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' })
+      .then(reg => {
+        reg.update().catch(() => {});
+        // اگر نسخهٔ تازه نصب شد، صفحه را خودکار دوباره بار می‌کنیم.
+        navigator.serviceWorker.addEventListener('controllerchange', () => {
+          if (!window.__siteUpdateReloaded) {
+            window.__siteUpdateReloaded = true;
+            location.reload();
+          }
+        });
+      })
+      .catch(() => {});
+  });
+}
 </script>
 </body>
 </html>
